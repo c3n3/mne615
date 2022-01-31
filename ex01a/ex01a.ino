@@ -1,3 +1,7 @@
+// Caden Churchman
+// MNE 615
+// Exercise 1
+
 #include "math.h"
 #include "Arduino.h"
 
