@@ -3,7 +3,7 @@
     "configurations": [
         {
             "name": "Arduino",
-            "compilerPath": "/home/caden/Apps/arduino-1.8.16-linux64/arduino-1.8.16/hardware/tools/avr/bin/avr-g++",
+            "compilerPath": "/home/caden/Downloads/arduino-1.8.16/hardware/tools/avr/bin/avr-g++",
             "compilerArgs": [
                 "-w",
                 "-std=gnu++11",
@@ -16,15 +16,15 @@
             ],
             "intelliSenseMode": "gcc-x64",
             "includePath": [
-                "/home/caden/Apps/arduino-1.8.16-linux64/arduino-1.8.16/hardware/arduino/avr/cores/arduino",
-                "/home/caden/Apps/arduino-1.8.16-linux64/arduino-1.8.16/hardware/arduino/avr/variants/mega",
-                "/home/caden/Apps/arduino-1.8.16-linux64/arduino-1.8.16/libraries/Servo/src",
-                "/home/caden/Apps/arduino-1.8.16-linux64/arduino-1.8.16/hardware/tools/avr/lib/gcc/avr/7.3.0/include",
-                "/home/caden/Apps/arduino-1.8.16-linux64/arduino-1.8.16/hardware/tools/avr/lib/gcc/avr/7.3.0/include-fixed",
-                "/home/caden/Apps/arduino-1.8.16-linux64/arduino-1.8.16/hardware/tools/avr/avr/include"
+                "/home/caden/Downloads/arduino-1.8.16/hardware/arduino/avr/cores/arduino",
+                "/home/caden/Downloads/arduino-1.8.16/hardware/arduino/avr/variants/mega",
+                "/home/caden/Downloads/arduino-1.8.16/libraries/Servo/src",
+                "/home/caden/Downloads/arduino-1.8.16/hardware/tools/avr/lib/gcc/avr/7.3.0/include",
+                "/home/caden/Downloads/arduino-1.8.16/hardware/tools/avr/lib/gcc/avr/7.3.0/include-fixed",
+                "/home/caden/Downloads/arduino-1.8.16/hardware/tools/avr/avr/include"
             ],
             "forcedInclude": [
-                "/home/caden/Apps/arduino-1.8.16-linux64/arduino-1.8.16/hardware/arduino/avr/cores/arduino/Arduino.h"
+                "/home/caden/Downloads/arduino-1.8.16/hardware/arduino/avr/cores/arduino/Arduino.h"
             ],
             "cStandard": "c11",
             "cppStandard": "c++11",
