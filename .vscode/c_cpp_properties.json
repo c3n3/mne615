@@ -18,6 +18,7 @@
             "includePath": [
                 "/home/caden/Downloads/arduino-1.8.16/hardware/arduino/avr/cores/arduino",
                 "/home/caden/Downloads/arduino-1.8.16/hardware/arduino/avr/variants/mega",
+                "/home/caden/Arduino/libraries/Arduino-PID-Library-master",
                 "/home/caden/Downloads/arduino-1.8.16/libraries/Servo/src",
                 "/home/caden/Downloads/arduino-1.8.16/hardware/tools/avr/lib/gcc/avr/7.3.0/include",
                 "/home/caden/Downloads/arduino-1.8.16/hardware/tools/avr/lib/gcc/avr/7.3.0/include-fixed",
