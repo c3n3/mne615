@@ -7,47 +7,47 @@
 #define CUSTOM_SETTINGS
 #define INCLUDE_GAMEPAD_MODULE
 #include <Dabble.h>
+#include <SD.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <Servo.h>
-#include <PID_v1.h>
+#include "src/CustomPID.hpp"
 
-
+#define logn(arg) Serial.println(arg)
+#define logv(arg) Serial.print(#arg " = "); Serial.println(arg)
+#define log(arg) Serial.print(arg)
  
-void serPrintf(const char* fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
+// void serPrintf(const char* fmt, ...)
+// {
+//     va_list args;
+//     va_start(args, fmt);
  
-    while (*fmt != '\0') {
-        if (*fmt == '%' && *(fmt+1) == 'd') {
-            int i = va_arg(args, int);
-            Serial.print(i);
-        } else if (*fmt == '%' && *(fmt+1) == 'c') {
-            // note automatic conversion to integral type
-            int c = va_arg(args, int);
-            Serial.print(static_cast<char>(c));
-        } else if (*fmt == '%' && *(fmt+1) == 'f') {
-            double d = va_arg(args, double);
-            Serial.print(d);
-        } else {
-            Serial.print(*fmt);
-        }
-        ++fmt;
-    }
-    va_end(args);
-}
-
-#define _PRINT(arg, ...) Serial.println() 
-
-#define PRINT(arg, ...) Serial 
+//     while (*fmt != '\0') {
+//         if (*fmt == '%' && *(fmt+1) == 'd') {
+//             int i = va_arg(args, int);
+//             Serial.print(i);
+//         } else if (*fmt == '%' && *(fmt+1) == 'c') {
+//             // note automatic conversion to integral type
+//             int c = va_arg(args, int);
+//             Serial.print(static_cast<char>(c));
+//         } else if (*fmt == '%' && *(fmt+1) == 'f') {
+//             double d = va_arg(args, double);
+//             Serial.print(d);
+//         } else {
+//             Serial.print(*fmt);
+//         }
+//         ++fmt;
+//     }
+//     va_end(args);
+// }
 
 // Controls a motor with two direction pins
 template<int ENC_PIN>
 class PidMotor {
+public:
     uint8_t dirPin_;
     uint8_t pwmPin_;
-    PID pid_;
+    CustomPID pid_;
     const uint8_t updateInterval = 100;
     unsigned long prevTime_;
     uint32_t prevCount_;
@@ -55,11 +55,19 @@ class PidMotor {
     double pidIn_;
     double pidOut_;
     double pidValue_;
-
+    double prevSet_;
+    double realOut_;
+    uint32_t killCount_;
+    bool killOnCount_;
+    bool delayPid_;
+    unsigned long pidStartTime_;
+    static constexpr uint16_t DELAY_PID_TIME = 150;
 public:
     PidMotor(uint8_t dirPin, uint8_t pwmPin)
         : dirPin_(dirPin), pwmPin_(pwmPin), pid_(&pidIn_, &pidOut_, &pidValue_, 0.013725, 0.08235, 0, DIRECT)
     {
+        killOnCount_ = false;
+        delayPid_ = false;
         attachInterrupt(digitalPinToInterrupt(ENC_PIN),[&count_](){count_++;},RISING);
         pinMode(dirPin_, OUTPUT);
         pinMode(pwmPin_, OUTPUT);
@@ -78,9 +86,30 @@ public:
         digitalWrite(dirPin_, HIGH);
     }
 
+    double getSpeed()
+    {
+        return pidValue_;
+    }
+
+    double batteryVoltage()
+    {
+        return ((double)analogRead(A9) / 1024.0) * 10;
+    }
+
+    double bestFitPwm(double cps)
+    {
+        return (((cps) / 31.5162) * (4.8*9 / batteryVoltage()));
+    }
+
+    double bestFitCps(double pwm)
+    {
+        return ((pwm / (4.8*9 / batteryVoltage())) * 31.5162);
+    }
+
     // set speed based on float
     void setSpeed(double cps)
     {
+        killOnCount_ = false;
         double set = ((cps < 0 ? -cps : cps)) ;
 
         if (cps < 0) {
@@ -89,20 +118,58 @@ public:
             setForward();
         }
         // Use best fit as starting value
-        // cps = 31.5162 * x + 30.3788
-        double start = (cps - 30.3788) / 31.5162;
-        analogWrite(pwmPin_, start);
+        if (cps != prevSet_) {
+            // cps = 31.5162 * x + 30.3788
+            double pwmStart = bestFitPwm(set);
+            analogWrite(pwmPin_, pwmStart);
+            realOut_ = pwmStart;
+            pidStartTime_ = millis();
+            delayPid_ = true;
+        }
+        // log("Writing motor speed to "); logn(start);
         pidValue_ = set;
+        prevSet_ = cps;
+    }
+
+    void move(double cps, double counts)
+    {
+        killCount_ = count_ + counts;
+        setSpeed(cps);
+        killOnCount_ = true;
     }
 
     void tick()
     {
+        const double cps = ((double)(count_ - prevCount_) / (double)(millis() - prevTime_)) * 1000.0;
+        // log("Cps = "); log(cps); log(" PWM = "); log(realOut_); log(" Volage = "); logn(batteryVoltage());
+        if (killOnCount_ && count_ >= killCount_) {
+            setSpeed(0);
+            return;
+        }
+
         if (millis() - prevTime_ > updateInterval) {
-            pidIn_ = ((double)(count_ - prevCount_) / (double)(millis() - prevTime_)) * 1000.0;
-            pid_.Compute();
-            analogWrite(pwmPin_, pidOut_);
+            if (!delayPid_) {
+                pidIn_ = cps;
+                pid_.Compute(millis());
+                realOut_ = pidOut_;
+                analogWrite(pwmPin_, pidOut_);
+            }
             prevTime_ += updateInterval;
             prevCount_ = count_;
+        }
+
+        // Used for initial move
+        if (delayPid_) {
+            for (int i = 0; i < 100; i++) {
+                pidIn_ = bestFitCps(pidOut_);
+                pid_.Compute(i * 100);
+                // log("Delaying pid, fake cps = "); log(pidIn_); log(" PWM = "); log(pidOut_); log(" MIllis "); logn(millis());
+            }
+            pid_.SetLastTime(millis());
+            // delayPid_ = false;
+            if (millis() - pidStartTime_ > DELAY_PID_TIME) {
+                delayPid_ = false;
+            }
         }
     }
 };
@@ -125,6 +192,7 @@ private:
     const uint16_t stepsPerRev_;
     uint16_t msInterval_;
     uint16_t toStep_;
+    float prevDps_;
     bool coutingSteps_;
     Direction direction_;
     unsigned long time_;
@@ -136,16 +204,16 @@ private:
         return (rps * stepsPerRev_);
     } 
 
-    uint16_t dpsToStepsPerSecond(float dps)
+    float dpsToStepsPerSecond(float dps)
     {
-        const float degreesPerStep = 360 / stepsPerRev_;
-        return abs(dps / degreesPerStep);
-    } 
+        const float degreesPerStep = 360.0 / (float)stepsPerRev_;
+        return abs(dps) / degreesPerStep;
+    }
 public:
 
 
     // Construct a stepper motor
-    StepperMotor(uint8_t dirPin, uint8_t stepPin, uint16_t stepsPerRev = 200)
+    StepperMotor(uint8_t dirPin, uint8_t stepPin, uint16_t stepsPerRev = 20)
         : dirPin_(dirPin), stepPin_(stepPin), stepsPerRev_(stepsPerRev), msInterval_(0), direction_(LOW), toStep_(0), coutingSteps_(false)
     {
         pinMode(dirPin_, OUTPUT);
@@ -158,14 +226,18 @@ public:
     void setSpeedDps(float dps)
     {
         coutingSteps_ = false;
+        if (dps == prevDps_) {
+            return;
+        }
         if (dps == 0) {
             msInterval_ = 0;
             return;
         }
         direction_ = dps < 0 ? LOW : HIGH;
         // 1000ms / 1s *  (second / step)
-        msInterval_ = 1000 / dpsToStepsPerSecond(dps);
+        msInterval_ = 1000.0 / dpsToStepsPerSecond(dps);
         time_ = millis();
+        prevDps_ = dps;
     }
 
     // In steps per second
@@ -187,6 +259,7 @@ public:
     {
         msInterval_ = 0;
         coutingSteps_ = false;
+        prevDps_ = 0;
         toStep_ = 0;
     }
 
@@ -194,9 +267,10 @@ public:
     {
         const float stepsPerDegree = stepsPerRev_ / 360.0;
         const float sign = degrees < 0 ? -1 : 1;
+        setSpeedDps(dps);
         toStep_ = sign * degrees * stepsPerDegree;
         coutingSteps_ = true;
-        setSpeedDps(sign * dps);
+        logv(dps);
     }
 
     // Step the motor
@@ -215,6 +289,11 @@ public:
         msInterval_ = 0;
         direction_ = dir;
         step();
+    }
+
+    bool isMoving()
+    {
+        return msInterval_ != 0;
     }
 
     // Must be called continuously
@@ -258,11 +337,17 @@ public:
     {
         screw.tick();
     }
+
+    bool isMoving()
+    {
+        return screw.isMoving();
+    }
 };
 
 
 class Gripper {
-    static constexpr uint8_t SERVO_CONTROL_PIN = 44;
+public:
+    static constexpr uint8_t SERVO_CONTROL_PIN = 46;
     Servo servo;
     float targetUs_;
     float currentUs_;
@@ -273,11 +358,16 @@ class Gripper {
 public:
     Gripper()
     {
-        pinMode(SERVO_CONTROL_PIN, OUTPUT);
-        servo.attach(SERVO_CONTROL_PIN);
-        targetUs_ = 800;
-        currentUs_ = 800;
-        servo.writeMicroseconds(targetUs_);
+        pinMode(46, OUTPUT);
+        targetUs_ = 850;
+        currentUs_ = 850;
+        sign_ = 1;
+    }
+
+    void init()
+    {
+        servo.attach(46);
+        servo.writeMicroseconds(800);
     }
 
     void move(int us)
@@ -287,122 +377,33 @@ public:
         servo.writeMicroseconds(us);
     }
 
+    void stop()
+    {
+        targetUs_ = currentUs_;
+    }
+
     void move(int us, float usps)
     {
         targetUs_ = us;
         sign_ = targetUs_ - currentUs_ < 0 ? -1 : 1;
         usInterval_ = sign_ * (usps / 1000.0) * msPerInterval_;
-        time_ = millis();
-    }
-
-    void tick()
-    {
-        // Float check for non equality using within 1
-        if ((sign_ > 0 && currentUs_ < targetUs_) || (sign_ < 0 && currentUs_ > targetUs_)) {
-            if (millis() - time_ > usInterval_) {
-                currentUs_ += usInterval_;
-                servo.writeMicroseconds(currentUs_);
-                time_ += msPerInterval_;
-            }
-        }
-    }
-};
-
-class Robot {
-    typedef void(*RobotAlgorithm)(Robot*);
-    PidMotor<20> left_;
-    PidMotor<3> right_;
-    unsigned long timeToKill_;
-    bool setToKill_;
-    bool isMoving_;
-    RobotAlgorithm algo_;
-
-    float ipsToCps(float ips)
-    {
-        // inches per rotation (circumference) / counts per rotation
-        const float countsPerInch =  360.0 / 8.4823;
-        return ips * countsPerInch;
-    }    
-
-    float dpsToCps(float dps)
-    {
-        // Calculated based on axle distance and wheel circumference
-        // (17.56 / 360.0) * (360.0 / 8.4823)
-        // (axle circumference / degrees per rotation) * (counts per rotation / wheel circumference)
-        return dps * 2.07;
-    }
-public:
-    Lift lift;
-    Gripper gripper;
-
-    Robot(RobotAlgorithm algo)
-        : left_(41, 45), right_(42, 46),
-        isMoving_(false),
-        timeToKill_(0),
-        setToKill_(false),
-        algo_(algo)
-    {
-    }
-
-    void move(float ips, float inches)
-    {
-        float cps = ipsToCps(ips);
-        right_.setSpeed(cps);
-        left_.setSpeed(cps);
-        isMoving_ = true;
-        setToKill_ = true;
-        timeToKill_ = millis() + ((inches / ips) * 1000);
-    }
-
-    void move(float ips)
-    {
-        float cps = ipsToCps(ips);
-        right_.setSpeed(cps);
-        left_.setSpeed(cps);
-        isMoving_ = true;
-    }
-
-    void rotate(float dps, float degrees)
-    {
-        float cps = dpsToCps(dps);
-        right_.setSpeed(cps * -1);
-        left_.setSpeed(cps);
-        isMoving_ = true;
-        setToKill_ = true;
-        timeToKill_ = millis() + ((degrees / dps) * 1000);
-    }
-
-    void rotate(float dps)
-    {
-        float speed = dpsToCps(dps);
-        right_.setSpeed(speed * -1);
-        left_.setSpeed(speed);
-        isMoving_ = true;
-    }
-
-    void stop()
-    {
-        right_.setSpeed(0);
-        left_.setSpeed(0);
-        isMoving_ = false;
+        // time_ = millis();
     }
 
     bool isMoving()
     {
-        return isMoving_;
+        return (sign_ > 0 && currentUs_ < targetUs_) || (sign_ < 0 && currentUs_ > targetUs_);
     }
 
     void tick()
     {
-        lift.tick();
-        gripper.tick();
-        right_.tick();
-        left_.tick();
-        if (setToKill_ && (millis() - timeToKill_ >= 0)) {
-            stop();
-            setToKill_ = false;
+        if ((sign_ > 0 && currentUs_ < targetUs_) || (sign_ < 0 && currentUs_ > targetUs_)) {
+            if (millis() - time_ > usInterval_) {
+                currentUs_ += usInterval_;
+                servo.writeMicroseconds(currentUs_);
+                time_ = millis();
+            }
         }
-        algo_(this);
     }
 };
 
@@ -453,27 +454,253 @@ private:
     Button latest;
 };
 
+#include <stdlib.h>
+
+class SDCommandReader {
+    File f;
+    static constexpr uint16_t chipSelect = 53;
+public:
+    enum CommandType {
+        FORWARD, // DISTANCE IN INCHES
+        REVERSE, // DISTANCE IN INCHES
+        RIGHT, // ANGLE IN DEGREES
+        LEFT, // ANGLE IN DEGREES
+        UP, // LEAD SCREW UP DISTANCE IN INCHES
+        DOWN, // LEAD SCREW UP DISTANCE IN INCHES
+        SERVO, // PULSE HEIGHT IN MICROSECONDS
+        PAUSE, // MILLISECONDS
+        NONE, // Not a command
+        END, // No more commands
+    };
+
+    struct Command {
+        CommandType t;
+        double value;
+    };
+
+    CommandType stringToCommand(const char* comp)
+    {
+        #define CHECK(val) if (String(#val) == comp) return val;
+        CHECK(FORWARD);
+        CHECK(REVERSE);
+        CHECK(RIGHT);
+        CHECK(LEFT);
+        CHECK(UP);
+        CHECK(DOWN);
+        CHECK(SERVO);
+        CHECK(PAUSE);
+        return NONE;
+        #undef CHECK
+    }
+
+    Command next()
+    {
+        char buffer[100];
+        uint16_t i = 0;
+        if (f && f.available())
+        {
+            do {
+                buffer[i++] = (char)f.read();
+            } while (f.available() && buffer[i - 1] != '\n');
+            buffer[i] = '\0';
+            char command[40];
+            char value[40];
+            for (i = 0; buffer[i] != ','; i++) {
+                command[i] = buffer[i];
+            }
+            command[i] = '\0';
+            i++; // Because the comma
+            i++; // Because there is a space after the comma
+            int vi = 0;
+            for (; buffer[i] != '\0'; i++) {
+                value[vi++] = buffer[i];
+            }
+            value[vi] = '\0';
+            return {
+                .t = stringToCommand(command),
+                .value = atof(value)
+            };
+        }
+        return {
+            .t = SDCommandReader::NONE,
+            .value = 0
+        };
+
+    }
+
+    void init()
+    {
+        Serial.print("Initializing SD card...");
+
+        if (!SD.begin(chipSelect))
+        {
+            Serial.println("initialization failed. Things to check:");
+            Serial.println("1. is a card inserted?");
+            Serial.println("2. is your wiring correct?");
+            Serial.println("3. did you change the chipSelect pin to match your shield or module?");
+            Serial.println("Note: press reset or reopen this Serial Monitor after fixing your issue!");
+            while (true)
+                ;
+        }
+    }
+
+    void restart()
+    {
+        f.close();
+        f = SD.open("datafile.txt");
+    }
+};
 
 Dab dabble;
 
-void setup() {
-    Serial.begin(115200);
-    delay(100);
-    Serial.println("Setup");
-    dabble.init();
-    serPrintf("hello %d %c %f\n", 10, 'A', 90.876);
-}
+class Robot {
+public:
+    enum State {
+        Rotate,
+        Move,
+        Other
+    };
+    typedef void(*RobotAlgorithm)(Robot*);
+    PidMotor<20> left_;
+    PidMotor<3> right_;
+    unsigned long timeToKill_;
+    bool setToKill_;
+    bool isMoving_;
+    State state_;
+    RobotAlgorithm algo_;
 
-void algorithm(Robot* robot)
+    float iToC(float i)
+    {
+        // inches per rotation (circumference) / counts per rotation
+        const float countsPerInch =  360.0 / 8.4823;
+        return i * countsPerInch;
+    }    
+
+    float dToC(float dps)
+    {
+        // Calculated based on axle distance and wheel circumference
+        // (17.56 / 360.0) * (360.0 / 8.4823)
+        // (axle circumference / degrees per rotation) * (counts per rotation / wheel circumference)
+        return dps * 2.07;
+    }
+public:
+
+    Lift lift;
+    Gripper gripper;
+    SDCommandReader commander;
+
+    void init()
+    {
+        gripper.init();
+    }
+
+    Robot(RobotAlgorithm algo)
+        : left_(41, 5), right_(42, 2),
+        isMoving_(false),
+        timeToKill_(0),
+        setToKill_(false),
+        algo_(algo)
+    {
+        commander.init();
+        state_ = Other;
+    }
+
+    void move(float ips, float inches)
+    {
+        float cps = iToC(ips);
+        float counts = iToC(inches);
+        right_.move(cps, counts);
+        left_.move(cps, counts);
+        isMoving_ = true;
+        state_ = Move;
+    }
+
+    void move(float ips)
+    {
+        float cps = iToC(ips);
+        right_.setSpeed(cps);
+        left_.setSpeed(cps);
+        isMoving_ = true;
+    }
+
+    void rotate(float dps, float degrees)
+    {
+        float cps = dToC(dps);
+        float counts = dToC(degrees);
+        right_.move(-cps, counts);
+        left_.move(cps, counts);
+        isMoving_ = true;
+        state_ = Rotate;
+    }
+
+    void rotate(float dps)
+    {
+        float speed = dToC(dps);
+        right_.setSpeed(speed * -1);
+        left_.setSpeed(speed);
+        isMoving_ = true;
+    }
+
+    void stop()
+    {
+        right_.setSpeed(0);
+        left_.setSpeed(0);
+        isMoving_ = false;
+    }
+
+    bool isMoving()
+    {
+        return isMoving_;
+    }
+
+    void tick()
+    {
+        right_.tick();
+        left_.tick();
+        lift.tick();
+        gripper.tick();
+        switch (state_)
+        {
+        case Move:
+            if (left_.getSpeed() == 0) {
+                right_.setSpeed(0);
+                isMoving_ = false;
+                state_ = Other;
+            } else if (right_.getSpeed() == 0) {
+                left_.setSpeed(0);
+                isMoving_ = false;
+                state_ = Other;
+            }
+        case Rotate:
+            if (left_.getSpeed() == 0 && right_.getSpeed() == 0) {
+                isMoving_ = false;
+            }
+            break;
+        default: break;
+        }
+        if (setToKill_ && (millis() > timeToKill_)) {
+            stop();
+            setToKill_ = false;
+        }
+        algo_(this);
+    }
+};
+
+
+enum RobotState {
+    Manual = 0,
+    SdCard = 1,
+};
+
+int manual(Robot* robot)
 {
-    Dab* d = &dabble;
-    d->tick();
-    switch (d->input()) {
+    auto c = dabble.input();
+    switch (c) {
         case Dab::Up:
-            robot->move(2);
+            robot->move(5);
             break;
         case Dab::Down:
-            robot->move(-2);
+            robot->move(-5);
             break;
         case Dab::Left:
             robot->rotate(-90);
@@ -481,36 +708,143 @@ void algorithm(Robot* robot)
         case Dab::Right:
             robot->rotate(90);
             break;
-        default:
-            robot->stop();
-            switch (d->input())
-            {
-                case Dab::Triangle:
-                    robot->lift.move(0.1);
-                    break;
-                case Dab::Circle:
-                    robot->gripper.move(800, 300);
-                    break;
-                case Dab::X:
-                    robot->lift.move(-0.1);
-                    break;
-                case Dab::Square:
-                    robot->gripper.move(2400, 300);
-                    break;
-                case Dab::Start:
-                    break;
-                case Dab::Select:
-                    break;
-                default: break;
-            }
+        case Dab::Triangle:
+            robot->lift.move(0.1);
             break;
+        case Dab::Circle:
+            robot->gripper.move(800, 300);
+            break;
+        case Dab::X:
+            robot->lift.move(-0.1);
+            break;
+        case Dab::Square:
+            robot->gripper.move(2400, 300);
+            break;
+        case Dab::Start:
+            break;
+        case Dab::Select:
+            robot->commander.restart();
+            return SdCard;
+    }
+    if (c != Dab::Up || c != Dab::Down || c != Dab::Right || c != Dab::Left) {
+        robot->stop();
+    }
+    if (c != Dab::Triangle || c != Dab::X) {
+        robot->lift.move(0);
+    }
+    if (c != Dab::Square || c != Dab::Circle) {
+        robot->gripper.stop();
+    }
+    return Manual;
+}
+
+int sdCard(Robot* robot)
+{
+    auto in = dabble.input();
+    if (in == Dab::Start) {
+        return Manual;
+    }
+    if (robot->isMoving() || robot->lift.isMoving() || robot->gripper.isMoving()) {
+        return SdCard;
+    }
+    auto c = robot->commander.next();
+    switch (c.t)
+    {
+        case SDCommandReader::FORWARD: log("Running "); log(c.value); log(" "); logn(__STRINGIFY(FORWARD));
+            robot->move(10, c.value);
+            break;
+        case SDCommandReader::REVERSE: log("Running "); log(c.value); log(" "); logn(__STRINGIFY(REVERSE));
+            robot->move(-10, c.value);
+            break;
+        case SDCommandReader::RIGHT: log("Running "); log(c.value); log(" "); logn(__STRINGIFY(RIGHT));
+            robot->rotate(180, c.value);
+            break;
+        case SDCommandReader::LEFT: log("Running "); log(c.value); log(" "); logn(__STRINGIFY(LEFT));
+            robot->rotate(-180, c.value);
+            break;
+        case SDCommandReader::UP: log("Running "); log(c.value); log(" "); logn(__STRINGIFY(UP));
+            robot->lift.move(c.value, 0.1);
+            break;
+        case SDCommandReader::DOWN: log("Running "); log(c.value); log(" "); logn(__STRINGIFY(DOWN));
+            robot->lift.move(c.value, -0.1);
+            break;
+        case SDCommandReader::SERVO: log("Running "); log(c.value); log(" "); logn(__STRINGIFY(SERVO));
+            robot->gripper.move(c.value, 300);
+            break;
+        case SDCommandReader::PAUSE: log("Running "); log(c.value); log(" "); logn(__STRINGIFY(PAUSE));
+            delay(c.value);
+            break;
+    }
+    return SdCard;
+}
+
+void algorithm(Robot* robot)
+{
+    static RobotState state = Manual;
+    dabble.tick();
+
+    switch (state)
+    {
+    case Manual:
+        state = manual(robot);
+        break;
+    case SdCard:
+        state = sdCard(robot);;
+        break;
+    default:
+        state = Manual;
+        break;
     }
 }
 
 Robot r(algorithm);
 
+void setup()
+{
+    Serial.begin(115200);
+    delay(100);
+    r.init();
+    pinMode(A9, INPUT);
+    Serial.println("Setup");
+    dabble.init();
+}
+
+
+int pos = 0;
+
+
 void loop() {
-    dabble.tick();
     r.tick();
+    // unsigned long startTime = millis();
+    // r.left_.setSpeed(500);
+    // r.right_.setSpeed(500);
+    // // r.move(2);
+    // while (millis() < 5000 + startTime) {
+    //     // r.left_.tick();
+    //     // r.right_.tick();
+    //     r.tick();
+    // }
+    // r.move(5);
+    //  startTime = millis();
+    // // r.left_.setSpeed(200);
+    // // r.right_.setSpeed(200);
+    // while (millis() < 4000 + startTime) {
+    //     // r.left_.tick();
+    //     // r.right_.tick();
+    //     r.tick();
+    // }
+    // // r.move(0);
+    //  startTime = millis();
+    // r.left_.setSpeed(0);
+    // r.right_.setSpeed(0);
+    // while (millis() < 6000 + startTime) {
+    //     // r.left_.tick();
+    //     // r.right_.tick();
+    //     r.tick();
+    // }
+    // // dabble.tick();
+    // // r.move(6);
+    // // r.tick();
+
 }
 
