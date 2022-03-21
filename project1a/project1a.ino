@@ -230,6 +230,7 @@ public:
             return;
         }
         if (dps == 0) {
+            prevDps_ = 0;
             msInterval_ = 0;
             return;
         }
@@ -351,7 +352,7 @@ public:
     Servo servo;
     float targetUs_;
     float currentUs_;
-    static constexpr uint16_t msPerInterval_ = 100;
+    static constexpr uint16_t msPerInterval_ = 15;
     float usInterval_;
     float sign_;
     unsigned long time_;
@@ -386,7 +387,7 @@ public:
     {
         targetUs_ = us;
         sign_ = targetUs_ - currentUs_ < 0 ? -1 : 1;
-        usInterval_ = sign_ * (usps / 1000.0) * msPerInterval_;
+        usInterval_ = sign_ * (usps / 1000.0) * (float)msPerInterval_;
         // time_ = millis();
     }
 
@@ -398,7 +399,7 @@ public:
     void tick()
     {
         if ((sign_ > 0 && currentUs_ < targetUs_) || (sign_ < 0 && currentUs_ > targetUs_)) {
-            if (millis() - time_ > usInterval_) {
+            if (millis() - time_ > msPerInterval_) {
                 currentUs_ += usInterval_;
                 servo.writeMicroseconds(currentUs_);
                 time_ = millis();
@@ -712,13 +713,13 @@ int manual(Robot* robot)
             robot->lift.move(0.1);
             break;
         case Dab::Circle:
-            robot->gripper.move(800, 300);
+            robot->gripper.move(800, 1000);
             break;
         case Dab::X:
             robot->lift.move(-0.1);
             break;
         case Dab::Square:
-            robot->gripper.move(2400, 300);
+            robot->gripper.move(2400, 1000);
             break;
         case Dab::Start:
             break;
@@ -726,13 +727,13 @@ int manual(Robot* robot)
             robot->commander.restart();
             return SdCard;
     }
-    if (c != Dab::Up || c != Dab::Down || c != Dab::Right || c != Dab::Left) {
+    if (c != Dab::Up && c != Dab::Down && c != Dab::Right && c != Dab::Left) {
         robot->stop();
     }
-    if (c != Dab::Triangle || c != Dab::X) {
+    if (c != Dab::Triangle && c != Dab::X) {
         robot->lift.move(0);
     }
-    if (c != Dab::Square || c != Dab::Circle) {
+    if (c != Dab::Square && c != Dab::Circle) {
         robot->gripper.stop();
     }
     return Manual;
