@@ -57,16 +57,16 @@ int manual(Robot *robot)
     switch (c)
     {
     case Dab::Up:
-        robot->move(5);
+        robot->move(10);
         break;
     case Dab::Down:
-        robot->move(-5);
+        robot->move(-10);
         break;
     case Dab::Left:
-        robot->rotate(-90);
+        robot->rotate(-180);
         break;
     case Dab::Right:
-        robot->rotate(90);
+        robot->rotate(180);
         break;
     case Dab::Select:
         robot->stop();
@@ -86,7 +86,8 @@ int manual(Robot *robot)
 int lineFollowing(Robot *robot)
 {
     static int substate = 0;
-
+    static int prev =0;
+    static uint32_t prevTime = 0;
     // Check the ping sensor
     // read calibrated sensor values and obtain a measure of the line position
     // from 0 to 7000 (for a white line, use readLineWhite() instead)
@@ -118,36 +119,65 @@ int lineFollowing(Robot *robot)
         return LineFollow;
     }
 
-    if (millis() - updateTime > 100) {
-        int16_t position = qtr.readLineBlack(sensorValues);
+    int16_t position = qtr.readLineBlack(sensorValues);
 
-        int16_t difference = position - 3500;
-        const double radiusMax = 25;
-        // double radius = sign(difference) * (((radiusMax - 1.0) / 3500.0) * abs(difference) + radiusMax);
-        const double speed = 3;
+    int16_t difference = position - 3500;
+    const double radiusMax = 25;
+    // double radius = sign(difference) * (((radiusMax - 1.0) / 3500.0) * abs(difference) + radiusMax);
+    const double speed = 5;
+    const double moveSpeed = speed * 3;
+    const double arcSpeed = speed * 0.75;
 
-        uint16_t diff = abs(difference);
-        int s = sign(difference);
+    uint16_t diff = abs(difference);
+    int s = sign(difference);
 
-        if (diff < 100) {
-            radius += 1;
-        } else if (diff < 500) {
-            radius -= 1;
-        } else if (diff < 1000) {
-            radius -= 2;
-        } else if (diff < 1500) {
-            radius -= 3;
-        } else {
-            radius = 0.1;
+    const int RIGHT = 0;
+    const int LEFT = 7;
+    bool pass = false;
+    for (int i = 0; i < 8; i++) {
+        if (sensorValues[i] < 400) {
+            pass = true;
         }
-        if (radius > radiusMax) {
-            radius = radiusMax;
-        } else if (radius < 1) {
-            radius = 1;
-        }
-        robot->arcMove(speed, radius*s);
-
-        updateTime = millis();
+    }
+    if (!pass)  {
+        robot->arcMove(arcSpeed, 1.5*prev);
+        return LineFollow;
+    }
+    const uint16_t delayTime = 100;
+    if (sensorValues[RIGHT] < 600) {
+        // if (millis() - prevTime > delayTime || prev == 1) {
+            prev = 1;
+            robot->arcMove(arcSpeed, 1.5);
+            prevTime = millis();
+        // }
+    } else if (sensorValues[LEFT] < 600 || prev == -1) {
+        // if (millis() - prevTime > delayTime) {
+            prev = -1;
+            robot->arcMove(arcSpeed, -1.5);
+            prevTime = millis();
+        // }
+    } else if (sensorValues[LEFT-1] < 4 || prev == -1) {
+        // if (millis() - prevTime > delayTime) {
+            prev = -1;
+            robot->arcMove(arcSpeed, -1.5);
+            prevTime = millis();
+        // }
+    } else if (sensorValues[RIGHT+1] < 4 || prev == -1) {
+        // if (millis() - prevTime > delayTime) {
+            prev = 1;
+            robot->arcMove(arcSpeed, 1.5);
+            prevTime = millis();
+        // }
+    } else if (diff < 100) {
+        robot->move(moveSpeed);
+    } else if (diff < 500) {
+        robot->arcMove(speed, 4*s);
+    } else if (diff < 1000) {
+        robot->arcMove(speed, 2*s);
+    } else if (diff < 1500) {
+        robot->arcMove(speed, 1*s);
+    } else {
+        robot->arcMove(speed, 1*s);
     }
     return LineFollow;
 }
@@ -252,6 +282,5 @@ int pos = 0;
 void loop()
 {
     // digitalWrite(trig, 1);
-    logv(distance);
     r.tick();
 }
