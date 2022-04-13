@@ -11,7 +11,8 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <Servo.h>
-#include "src/CustomPID.hpp"
+
+
 
 #define logn(arg) Serial.println(arg)
 #define logv(arg) Serial.print(#arg " = "); Serial.println(arg)
@@ -141,13 +142,13 @@ public:
     void tick()
     {
         const double cps = ((double)(count_ - prevCount_) / (double)(millis() - prevTime_)) * 1000.0;
-        // log("Cps = "); log(cps); log(" PWM = "); log(realOut_); log(" Volage = "); logn(batteryVoltage());
         if (killOnCount_ && count_ >= killCount_) {
             setSpeed(0);
             return;
         }
 
         if (millis() - prevTime_ > updateInterval) {
+            // log("Cps = "); log(cps); log(" PWM = "); log(realOut_); log(" Volage = "); logn(batteryVoltage());
             if (!delayPid_) {
                 pidIn_ = cps;
                 pid_.Compute(millis());
@@ -226,12 +227,12 @@ public:
     void setSpeedDps(float dps)
     {
         coutingSteps_ = false;
-        if (dps == prevDps_) {
-            return;
-        }
         if (dps == 0) {
             prevDps_ = 0;
             msInterval_ = 0;
+            return;
+        }
+        if (dps == prevDps_) {
             return;
         }
         direction_ = dps < 0 ? LOW : HIGH;
@@ -324,14 +325,14 @@ public:
         const float dpi = 18305.0;
         float degrees = dpi * inches;
         float dps = ips * dpi;
-        screw.move(dps, degrees);
+        screw.move(-dps, degrees);
     }
 
     void move(float ips)
     {
         const float dpi = 18305.0;
         float dps = ips * dpi;
-        screw.setSpeedDps(dps);
+        screw.setSpeedDps(-dps);
     }
 
     void tick()
@@ -409,6 +410,10 @@ public:
 };
 
 class Dab {
+    float angle;
+    float radius;
+    float x;
+    float y;
 public:
     enum Button {
         Start,
@@ -437,6 +442,33 @@ public:
         else if (GamePad.isTrianglePressed()) latest = Triangle;
         else if (GamePad.isSelectPressed()) latest = Select;
         else latest = None;
+        angle = 90.0 - GamePad.getAngle();
+        radius = GamePad.getRadius();
+        x = GamePad.getXaxisData();
+        y = GamePad.getYaxisData();
+        if (angle < -180.0) {
+            angle += 360.0;
+        }
+    }
+
+    float getRadius()
+    {
+        return radius;
+    }
+
+    float getAngle()
+    {
+        return angle;
+    }
+
+    float getX()
+    {
+        return x;
+    }
+
+    float getY()
+    {
+        return y;
     }
 
     Button input()
@@ -548,7 +580,7 @@ public:
     void restart()
     {
         f.close();
-        f = SD.open("datafile.txt");
+        f = SD.open("DATAFILE.TXT");
     }
 };
 
@@ -624,6 +656,14 @@ public:
         isMoving_ = true;
     }
 
+    void moveLeftRight(float leftIps, float rightIps)
+    {
+        right_.setSpeed(iToC(rightIps));
+        left_.setSpeed(iToC(leftIps));
+        isMoving_ = true;
+        state_ = Other;
+    }
+
     void rotate(float dps, float degrees)
     {
         float cps = dToC(dps);
@@ -693,41 +733,78 @@ enum RobotState {
     SdCard = 1,
 };
 
+
+
 int manual(Robot* robot)
 {
+    static double speedMod = 1.0;
+    static Dab::Button prev;
     auto c = dabble.input();
+    // log("Button == "); log(c); log(" Radius = "); logn(dabble.getRadius());
+
     switch (c) {
         case Dab::Up:
-            robot->move(5);
+            robot->move(20*speedMod);
             break;
         case Dab::Down:
-            robot->move(-5);
+            robot->move(-20*speedMod);
             break;
         case Dab::Left:
-            robot->rotate(-90);
+            robot->rotate(-360*speedMod);
             break;
         case Dab::Right:
-            robot->rotate(90);
+            robot->rotate(360*speedMod);
             break;
         case Dab::Triangle:
-            robot->lift.move(0.1);
+            robot->lift.move(0.5);
             break;
         case Dab::Circle:
-            robot->gripper.move(800, 1000);
+            robot->gripper.move(800, 2500);
             break;
         case Dab::X:
-            robot->lift.move(-0.1);
+            robot->lift.move(-0.5);
             break;
         case Dab::Square:
-            robot->gripper.move(2400, 1000);
+            robot->gripper.move(2800, 2500);
             break;
         case Dab::Start:
             break;
         case Dab::Select:
-            robot->commander.restart();
-            return SdCard;
+            if (prev == Dab::Select) break;
+            if (speedMod == 1.0) {
+                speedMod = 0.25;
+            } else {
+                speedMod = 1.0;
+            }
+            break;
     }
-    if (c != Dab::Up && c != Dab::Down && c != Dab::Right && c != Dab::Left) {
+    if (dabble.getRadius() != 0) {
+        float speed = (25.0 * dabble.getRadius() / 7.0) * speedMod;
+        float leftSpeed = speed;
+        float rightSpeed = speed;
+        float angle = dabble.getAngle();
+        float cosine = cos((angle) * 3.1415 / 180.0);
+        // float sine = sin(angle * 3.1415 / 180.0);
+        if (dabble.getAngle() == -180.0) {
+            leftSpeed = -leftSpeed; rightSpeed = -rightSpeed;
+        } else if (dabble.getAngle() < 0) {
+            leftSpeed = cosine * leftSpeed;
+        } else {
+            rightSpeed = cosine * rightSpeed;
+        } 
+        // if (dabble.getAngle() == 90.0) {
+        //     leftSpeed = speed;
+        //     rightSpeed = -speed;
+        // } else if (dabble.getAngle() == -90.0) {
+        //     leftSpeed = -speed;
+        //     rightSpeed = speed;
+        // }
+        // log("Left speed = "); log(leftSpeed); log(" Right speed = "); log(rightSpeed); log(" Speed = "); log(speed); log(" Radius = "); log(dabble.getRadius()); log(" Angle = "); log(angle);
+        // log(" X = "); log(dabble.getX()); log(" Y = "); logn(dabble.getY()); 
+        robot->moveLeftRight(leftSpeed, rightSpeed);
+    }
+
+    if (c != Dab::Up && c != Dab::Down && c != Dab::Right && c != Dab::Left && dabble.getRadius() == 0.0) {
         robot->stop();
     }
     if (c != Dab::Triangle && c != Dab::X) {
@@ -736,6 +813,7 @@ int manual(Robot* robot)
     if (c != Dab::Square && c != Dab::Circle) {
         robot->gripper.stop();
     }
+    prev = c;
     return Manual;
 }
 
@@ -816,36 +894,5 @@ int pos = 0;
 
 void loop() {
     r.tick();
-    // unsigned long startTime = millis();
-    // r.left_.setSpeed(500);
-    // r.right_.setSpeed(500);
-    // // r.move(2);
-    // while (millis() < 5000 + startTime) {
-    //     // r.left_.tick();
-    //     // r.right_.tick();
-    //     r.tick();
-    // }
-    // r.move(5);
-    //  startTime = millis();
-    // // r.left_.setSpeed(200);
-    // // r.right_.setSpeed(200);
-    // while (millis() < 4000 + startTime) {
-    //     // r.left_.tick();
-    //     // r.right_.tick();
-    //     r.tick();
-    // }
-    // // r.move(0);
-    //  startTime = millis();
-    // r.left_.setSpeed(0);
-    // r.right_.setSpeed(0);
-    // while (millis() < 6000 + startTime) {
-    //     // r.left_.tick();
-    //     // r.right_.tick();
-    //     r.tick();
-    // }
-    // // dabble.tick();
-    // // r.move(6);
-    // // r.tick();
-
 }
 
