@@ -32,7 +32,7 @@ public:
     }
 public:
 
-    void constantArcMove(double speed, double radius) 
+    void arcMove(double speed, double radius) 
     {
         double omega = speed * 2 * 3.1415 / (2*radius*3.1415);
         double Vl = omega* (radius + axilDiameter/2);
@@ -44,7 +44,7 @@ public:
 
     void arcMove(double speed, double radius, double distance)
     {
-        constantArcMove(speed, radius);
+        arcMove(speed, radius);
         timeToKill_ = millis() + distance / abs(speed);
         isMoving_ = true;
     }
