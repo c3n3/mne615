@@ -19,6 +19,7 @@
                 "/home/caden/Downloads/arduino-1.8.16/hardware/arduino/avr/cores/arduino",
                 "/home/caden/Downloads/arduino-1.8.16/hardware/arduino/avr/variants/mega",
                 "/home/caden/Arduino/libraries/Arduino-PID-Library-master/",
+                "/home/caden/Arduino/libraries/Dabble-master/src/**",
                 "/home/caden/Downloads/arduino-1.8.16/libraries/Servo/src",
                 "/home/caden/Arduino/libraries/QTRSensors/**",
                 "/home/caden/Arduino/libraries/SD-master/src/",

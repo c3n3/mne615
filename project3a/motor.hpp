@@ -5,7 +5,7 @@ class PidMotor {
 public:
     uint8_t dirPin_;
     uint8_t pwmPin_;
-    // CustomPID pid_;
+    CustomPID pid_;
     const uint8_t updateInterval = 200;
     unsigned long prevTime_;
     uint32_t prevCount_;
@@ -17,21 +17,21 @@ public:
     double realOut_;
     uint32_t killCount_;
     bool killOnCount_;
-    bool analog_;
     bool delayPid_;
+    bool analog_;
     unsigned long pidStartTime_;
     static constexpr uint16_t DELAY_PID_TIME = 150;
 public:
     PidMotor(uint8_t dirPin, uint8_t pwmPin)
-        : dirPin_(dirPin), pwmPin_(pwmPin)//, pid_(&pidIn_, &pidOut_, &pidValue_, 0.013725, 0.08235, 0, DIRECT)
+        : dirPin_(dirPin), pwmPin_(pwmPin), pid_(&pidIn_, &pidOut_, &pidValue_, 0.013725, 0.08235, 0, DIRECT)
     {
         killOnCount_ = false;
         delayPid_ = false;
         attachInterrupt(digitalPinToInterrupt(ENC_PIN),[&count_](){count_++;},RISING);
         pinMode(dirPin_, OUTPUT);
         pinMode(pwmPin_, OUTPUT);
+        pid_.SetMode(AUTOMATIC);
         analog_ = false;
-        // pid_.SetMode(AUTOMATIC);
     }
 
     // set dir
@@ -100,17 +100,13 @@ public:
         killOnCount_ = true;
     }
 
-    void pwm(double value)
-    {
-        analogWrite(pwmPin_, value);
+    void pwm(double val) {
         analog_ = true;
+        analogWrite(pwmPin_, val);
     }
 
     void tick()
     {
-        if (analog_) {
-            return;
-        }
         const double cps = ((double)(count_ - prevCount_) / (double)(millis() - prevTime_)) * 1000.0;
         // log("Cps = "); log(cps); log(" PWM = "); log(realOut_); log(" Volage = "); logn(batteryVoltage());
         if (killOnCount_ && count_ >= killCount_) {
@@ -121,7 +117,7 @@ public:
         if (millis() - prevTime_ > updateInterval) {
             if (!delayPid_) {
                 pidIn_ = cps;
-                // pid_.Compute(millis());
+                pid_.Compute(millis());
                 realOut_ = pidOut_;
                 analogWrite(pwmPin_, pidOut_);
             }
@@ -131,16 +127,16 @@ public:
 
         // Used for initial move
         if (delayPid_) {
-            // for (int i = 0; i < 100; i++) {
-            //     pidIn_ = bestFitCps(pidOut_);
-            //     pid_.Compute(i * 100);
-            //     // log("Delaying pid, fake cps = "); log(pidIn_); log(" PWM = "); log(pidOut_); log(" MIllis "); logn(millis());
-            // }
-            // pid_.SetLastTime(millis());
-            // delayPid_ = false;
-            // if (millis() - pidStartTime_ > DELAY_PID_TIME) {
-            //     delayPid_ = false;
-            // }
+            for (int i = 0;  i < 100; i++) {
+                pidIn_ = bestFitCps(pidOut_);
+                pid_.Compute(i * 100);
+                // log("Delaying pid, fake cps = "); log(pidIn_); log(" PWM = "); log(pidOut_); log(" MIllis "); logn(millis());
+            }
+            pid_.SetLastTime(millis());
+            delayPid_ = false;
+            if (millis() - pidStartTime_ > DELAY_PID_TIME) {
+                delayPid_ = false;
+            }
         }
     }
 };
